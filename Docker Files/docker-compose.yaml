@@ -1,25 +1,32 @@
 version: '3.8'
 
 services:
-  postgres:
+  auth-db:
     image: postgres:15-alpine
-    container_name: togglemaster-db
+    container_name: auth-db
     environment:
       POSTGRES_PASSWORD: pass
+      POSTGRES_DB: auth_db
     ports:
-      - "5432:5432"
-    volumes:
-      # Este comando mapeia os seus arquivos SQL para a pasta de inicialização automática do Postgres
-      - ./auth-service-main/db/init.sql:/docker-entrypoint-initdb.d/1-auth.sql
-      - ./flag-service-main/db/init.sql:/docker-entrypoint-initdb.d/2-flag.sql
-      - ./targeting-service-main/db/init.sql:/docker-entrypoint-initdb.d/3-targeting.sql
-      # Script especial para criar os múltiplos bancos (veja passo abaixo)
-      - ./init-multiple-databases.sh:/docker-entrypoint-initdb.d/0-init-db.sh
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - "5433:5432"
+
+  flags-db:
+    image: postgres:15-alpine
+    container_name: flags-db
+    environment:
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: flags_db
+    ports:
+      - "5434:5432"
+
+  targeting-db:
+    image: postgres:15-alpine
+    container_name: targeting-db
+    environment:
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: targeting_db
+    ports:
+      - "5435:5432"
 
   redis:
     image: redis:7-alpine
@@ -30,50 +37,47 @@ services:
   auth-service:
     build: ./auth-service-main
     container_name: auth-service
-    restart: on-failure
     ports:
       - "8001:8001"
     environment:
-      - DATABASE_URL=postgres://postgres:pass@postgres:5432/auth_db?sslmode=disable
-      - MASTER_KEY=admin-secreto-123
+      DATABASE_URL: postgres://postgres:pass@auth-db:5432/auth_db
+      MASTER_KEY: admin-secreto-123
     depends_on:
-      postgres:
-        condition: service_healthy
+      - auth-db
 
   flag-service:
     build: ./flag-service-main
     container_name: flag-service
-    restart: on-failure
     ports:
       - "8002:8002"
     environment:
-      - DATABASE_URL=postgres://postgres:pass@postgres:5432/flags_db?sslmode=disable
-      - AUTH_SERVICE_URL=http://auth-service:8001
+      DATABASE_URL: postgres://postgres:pass@flags-db:5432/flags_db
+      AUTH_SERVICE_URL: http://auth-service:8001
     depends_on:
+      - flags-db
       - auth-service
 
   targeting-service:
     build: ./targeting-service-main
     container_name: targeting-service
-    restart: on-failure
     ports:
       - "8003:8003"
     environment:
-      - DATABASE_URL=postgres://postgres:pass@postgres:5432/targeting_db?sslmode=disable
-      - AUTH_SERVICE_URL=http://auth-service:8001
+      DATABASE_URL: postgres://postgres:pass@targeting-db:5432/targeting_db
+      AUTH_SERVICE_URL: http://auth-service:8001
     depends_on:
+      - targeting-db
       - auth-service
 
   evaluation-service:
     build: ./evaluation-service-main
     container_name: evaluation-service
-    restart: on-failure
     ports:
       - "8004:8004"
     environment:
-      - REDIS_URL=redis://redis:6379
-      - FLAG_SERVICE_URL=http://flag-service:8002
-      - TARGETING_SERVICE_URL=http://targeting-service:8003
+      REDIS_URL: redis://redis:6379
+      FLAG_SERVICE_URL: http://flag-service:8002
+      TARGETING_SERVICE_URL: http://targeting-service:8003
     depends_on:
       - redis
       - flag-service
@@ -82,12 +86,11 @@ services:
   analytics-service:
     build: ./analytics-service-main
     container_name: analytics-service
-    restart: on-failure
     ports:
       - "8005:8005"
     environment:
-      - AWS_REGION=us-east-1
-      - AWS_SQS_URL=https://sqs.us-east-1.amazonaws.com/123/queue
-      - AWS_DYNAMODB_TABLE=ToggleMasterAnalytics
+      AWS_REGION: us-east-1
+      AWS_SQS_URL: https://sqs.us-east-1.amazonaws.com/123/queue
+      AWS_DYNAMODB_TABLE: ToggleMasterAnalytics
     depends_on:
       - evaluation-service
